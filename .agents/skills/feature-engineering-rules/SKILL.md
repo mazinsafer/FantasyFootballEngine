@@ -52,6 +52,14 @@ Target volume, QB play, and defensive scheme:
 | High-value touches (inside 10), sack rates | `nfl.import_pbp_data([years])` |
 | Supporting-cast injuries | `nfl.import_injuries([years])` |
 
+### Data gotchas (verified empirically)
+
+- `spread_line` in schedules is **positive when the home team is favored** (nflverse convention). Implied totals: home = total/2 + spread/2, away = total/2 − spread/2.
+- Schedules have **no precipitation column** (only `temp`, `wind`, `roof`); use `is_dome` (`roof` in dome/closed) as the weather-proof-venue flag.
+- Snap counts are keyed by **PFR player ids** (`pfr_player_id`), not GSIS ids; map via `nfl.import_seasonal_rosters()` which has both `player_id` (GSIS) and `pfr_id`.
+- Rosters also provide official positions (incl. TE) — prefer them over inferring position from play-by-play roles.
+- Schedules include `home_qb_id`/`away_qb_id` (scheduled starters) — use for starting-QB context features like AY/A.
+
 ### Premium data gaps and workarounds
 
 - **DVOA** (FTN proprietary): use opponent PPG allowed and opponent yards-per-play allowed instead.
