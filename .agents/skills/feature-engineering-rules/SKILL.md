@@ -12,6 +12,8 @@ description: >-
 
 All rolling/historical features use past 3 and 5 game windows and must be shifted 1 week to prevent data leakage.
 
+**Evaluation scope**: only depth-chart starters (rank 1) are evaluated at QB and TE; RB and WR keep all depth ranks (committees and WR2/WR3 are fantasy-relevant). `depth_chart_rank` is also a model feature for every position, taken from the latest `nfl.import_depth_charts()` daily snapshot before each game (as-of join on gameday, leakage-free).
+
 ## 1. General Game Context (all players)
 
 - **Vegas Implied Team Total**: `(Over/Under / 2) + (Spread / 2)` — arguably the most powerful predictive feature. High team totals = more fantasy points.
