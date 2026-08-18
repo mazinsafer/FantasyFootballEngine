@@ -14,9 +14,14 @@ All rolling/historical features use past 3 and 5 game windows and must be shifte
 
 **Evaluation scope**: only depth-chart starters (rank 1) are evaluated at QB and TE; RB and WR keep all depth ranks (committees and WR2/WR3 are fantasy-relevant). `depth_chart_rank` is also a model feature for every position, taken from the latest `nfl.import_depth_charts()` daily snapshot before each game (as-of join on gameday, leakage-free).
 
+**Fantasy season scope**: models train and evaluate on **weeks 1–17 only**. Week 18 (starters rest) and playoff weeks 19–22 are excluded from both training and prediction.
+
+**Season carryover**: `prev_season_ppg` and `prev_season_games` (a player's prior-season PPR average and games played, shifted forward one season) give the model a leakage-free prior for week 1 and early-season predictions, when all in-season rolling features are zero.
+
 ## 1. General Game Context (all players)
 
 - **Vegas Implied Team Total**: `(Over/Under / 2) + (Spread / 2)` — arguably the most powerful predictive feature. High team totals = more fantasy points.
+- **Vegas Win Probability**: implied probability from the moneyline (`-ml/(-ml+100)` if negative, `100/(ml+100)` if positive). Historical **player prop lines are not freely available** (nfl_data_py has none; archives are paid APIs) — game-level spread/total/moneyline is the full obtainable betting-market signal.
 - **Home/Away**: binary (1 = home).
 - **Weather**: wind speed (mph, crucial for passing/kicking), precipitation (binary), temperature (degrees).
 - **Rest Advantage**: days since team's last game minus days since opponent's last game.
