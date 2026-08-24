@@ -56,8 +56,16 @@ away_df['spread_line'] = -away_df['spread_line']  # flip spread for away team
 
 game_context = pd.concat([home_df, away_df], ignore_index=True)
 
-# Calculate implied totals and win probabilities
-game_context['implied_total'] = (game_context['total_line'] / 2) - (game_context['spread_line'] / 2)
+# Calculate implied totals and win probabilities.
+# spread_line is already from THIS team's perspective (away rows were flipped
+# above), positive = this team favored — so favorites get the HIGHER share of
+# the total: implied_total = total/2 + spread/2 (same convention as
+# feature_building, where home_implied = total/2 + spread/2 with a
+# positive-means-home-favored spread).
+game_context['implied_total'] = (
+    game_context['total_line'].fillna(44.0) / 2   # league-average total when line missing
+    + game_context['spread_line'].fillna(0) / 2
+)
 
 # Win probability from moneyline (American odds)
 def moneyline_to_prob(ml):
@@ -98,28 +106,48 @@ rosters_2026 = rosters_2026[rosters_2026['position'].isin(['QB', 'RB', 'WR', 'TE
 
 print(f"Found {len(rosters_2026)} fantasy-relevant players on 2026 rosters")
 
-# Load 2026 depth charts (latest snapshot per player — role entering season)
+# Load 2026 depth charts. 2025+ depth charts use the SNAPSHOT schema
+# (dt / pos_abb / pos_rank / gsis_id) — the pre-2025 week/depth_team/full_name
+# columns do not exist. Join on gsis_id (name joins are fragile), mirroring
+# feature_building's snapshot-era logic.
 depth_charts_2026 = nfl.import_depth_charts([2026])
 
-# Take the latest depth chart snapshot for each player (closest to Week 1)
-latest_dc = depth_charts_2026.sort_values('week', ascending=False).drop_duplicates(
-    subset=['season', 'club_code', 'full_name'], keep='first'
+depth_off = depth_charts_2026[
+    depth_charts_2026['pos_abb'].isin(['QB', 'RB', 'WR', 'TE', 'FB'])
+].copy()
+depth_off['snapshot_dt'] = pd.to_datetime(depth_off['dt']).dt.tz_localize(None)
+depth_off['gsis_id'] = depth_off['gsis_id'].astype(str)
+
+# Best (min) rank per player per snapshot day, then keep the latest snapshot
+# (the one closest to Week 1 — role entering the season)
+snap_ranks = (
+    depth_off.groupby(['gsis_id', 'snapshot_dt'])['pos_rank'].min().reset_index()
+    .sort_values('snapshot_dt')
 )
+latest_dc = snap_ranks.drop_duplicates('gsis_id', keep='last')
 
 # Map depth chart to roster (depth_chart_rank: 1=starter, 2=backup, etc.)
+rosters_2026['player_id'] = rosters_2026['player_id'].astype(str)
 rosters_2026 = rosters_2026.merge(
-    latest_dc[['season', 'club_code', 'full_name', 'depth_team']],
-    left_on=['season', 'team', 'full_name'],
-    right_on=['season', 'club_code', 'full_name'],
-    how='left'
-)
-rosters_2026['depth_chart_rank'] = rosters_2026['depth_team'].fillna(99).astype(int)  # 99=not on depth chart
+    latest_dc[['gsis_id', 'pos_rank']],
+    left_on='player_id', right_on='gsis_id', how='left'
+).drop(columns=['gsis_id'])
+rosters_2026['depth_chart_rank'] = rosters_2026['pos_rank'].fillna(99).astype(int)  # 99=not on depth chart
 
 print(f"Depth chart ranks assigned: {(rosters_2026['depth_chart_rank'] < 99).sum()} players on depth chart")
 print(f"Starters (depth_chart_rank=1): {(rosters_2026['depth_chart_rank'] == 1).sum()} players")
 
 # CAVEAT: Depth charts before final roster cuts (~Sept 1) include camp bodies, not real starters!
 print("\n⚠️  WARNING: If running before Sept 1, 2026, depth charts reflect camp rosters, not final starters.")
+
+# Match the Gold table's business rule: QB and TE are one-man positions, so
+# only depth-1 starters are evaluated. The model was trained exclusively on
+# starter QB/TE rows — predictions for backups would be meaningless.
+before_filter = len(rosters_2026)
+qb_te_mask = rosters_2026['position'].isin(['QB', 'TE'])
+rosters_2026 = rosters_2026[~qb_te_mask | (rosters_2026['depth_chart_rank'] == 1)].reset_index(drop=True)
+print(f"\nQB/TE starter filter: {before_filter} → {len(rosters_2026)} players "
+      f"({before_filter - len(rosters_2026)} backup QB/TE rows removed)")
 
 # COMMAND ----------
 
