@@ -3,8 +3,8 @@ name: fantasy-engine-architecture
 description: >-
   Project blueprint and architecture for the Fantasy Football ML Prediction
   Engine: Databricks medallion data layer, XGBoost training, OpenAI (GPT-5.6
-  Terra) insights, FastAPI/Lakebase serving, React frontend, and MAE accuracy
-  targets.
+  Terra) insights, FastAPI (Databricks SQL Connector) serving, React frontend,
+  and MAE accuracy targets.
   Use when planning project structure, adding pipeline stages, deciding where
   code should live, or evaluating model accuracy.
 ---
@@ -22,9 +22,9 @@ description: >-
    - Train traditional ML models (XGBoost / scikit-learn) in Databricks on the Gold table.
    - `insights/insights_pipeline.ipynb` passes player stats and ML projections to the OpenAI API (GPT-5.6 Terra, Responses API) for qualitative insights.
    - Final predictions + LLM insights → a `predictions` Delta table.
-3. **FastAPI serving layer**
-   - Sync the predictions Delta table into Lakebase (Databricks-managed PostgreSQL).
-   - FastAPI app connects via SQLAlchemy; endpoints like `/api/predictions/{player_id}`.
+3. **FastAPI serving layer** (`api/`, implemented)
+   - Queries Unity Catalog Delta tables directly via the Databricks SQL Connector (no Lakebase / SQLAlchemy copy).
+   - Endpoints: `/health`, `/api/players`, `/api/predictions`, `/api/weeks`, `/api/teams`. Run with `uvicorn main:app --reload --host 0.0.0.0 --port 8000` from `api/`.
 4. **React TypeScript frontend**
    - Dashboard fetches from FastAPI endpoints to display projections and LLM insights.
 

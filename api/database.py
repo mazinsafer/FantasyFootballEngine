@@ -157,6 +157,17 @@ def execute_query(
             if cursor.description is None:
                 return []
             columns = [col[0] for col in cursor.description]
+            # Connector 3.0.0's fetchall() converts Arrow → pandas → numpy and
+            # crashes on modern pandas ("int() argument ... not 'NoneType'").
+            if hasattr(cursor, "fetchall_arrow"):
+                table = cursor.fetchall_arrow()
+                return [
+                    {
+                        column: convert_value(column, value)
+                        for column, value in record.items()
+                    }
+                    for record in table.to_pylist()
+                ]
             return [convert_row(columns, row) for row in cursor.fetchall()]
     except DatabricksNotConfiguredError:
         raise
