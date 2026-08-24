@@ -1,6 +1,6 @@
 target-version = "py310"
 line-length = 100
-extend-exclude = [".venv", "data", "api/.venv"]
+extend-exclude = [".venv", "data", "api/.venv", ".ruff_cache", "ruff_cache"]
 
 [lint]
 select = ["E", "F"]

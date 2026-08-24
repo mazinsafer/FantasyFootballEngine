@@ -1,21 +1,21 @@
 # Fantasy Football ML Prediction Engine — Complete Project Documentation
 
-Last updated: August 24, 2026. This document describes exactly how every file in the repository works, the data contracts between them, the rules that must never be broken, and the current state of the project.
+Last updated: August 24, 2026. This document describes exactly how every file in the repository works, the data contracts between them, the rules that must never be broken, and the current state of the project. For a shorter onboarding path (quick start, repo map, weekly cadence), see the root [`README.md`](../README.md).
 
 ---
 
 ## 1. Project Overview
 
-An end-to-end machine learning system that predicts weekly NFL fantasy football points (full-PPR scoring) for QB/RB/WR/TE, explains those predictions with LLM-generated insights, stores everything in Databricks Delta tables, and serves it over FastAPI. A React dashboard is the remaining phase.
+An end-to-end machine learning system that predicts weekly NFL fantasy football points (full-PPR scoring) for QB/RB/WR/TE, explains those predictions with LLM-generated insights, stores everything in Databricks Delta tables, serves it over FastAPI, and displays it in the Gridiron Lab React dashboard.
 
 **Pipeline phases (from the project blueprint):**
 
 1. **Data layer (Databricks medallion)** — ingest raw NFL data, engineer features, store as a Gold Delta table. ✅ Done
 2. **ML + LLM insights** — XGBoost models trained on Gold, GPT-5.6 Terra insights via the OpenAI API, results in a `predictions` Delta table. ✅ Done
 3. **FastAPI serving layer** — `api/` reads Gold Delta tables through the Databricks SQL Connector (no Lakebase sync). ✅ Done
-4. **React TypeScript frontend** — dashboard displaying projections + insights. ⬜ Not started
+4. **React TypeScript frontend** — `gridironlab/` dashboard displaying projections and LLM insights. ✅ Done
 
-**Runtime environment:** Databricks (Unity Catalog + Delta). The notebooks originated as local Jupyter notebooks working against parquet files and were migrated; all table I/O now goes through `spark.table(...)` / `saveAsTable(...)`.
+**Runtime environment:** Databricks (Unity Catalog + Delta). The notebooks originated as local Jupyter notebooks working against parquet files and were migrated; all table I/O now goes through `spark.table(...)` / `saveAsTable(...)`. Local serving is FastAPI on `:8000` plus Vite on `:5173`.
 
 **Scoring formula (full PPR), used everywhere:**
 
@@ -48,7 +48,10 @@ fantasy_football.gold.player_weeks        ← Gold Delta table (~29k rows, 2020�
         fantasy_football.gold.predictions
                 │  read by (Databricks SQL Connector, SELECT only)
                 ▼
-        api/  FastAPI on :8000                      ← seeds the future UI
+        api/  FastAPI on :8000                      ← latest (season, week) only
+                │
+                ▼
+        gridironlab/  Vite + React  :5173           ← live fetch, sample fallback
 ```
 
 ---
@@ -198,7 +201,7 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 
 ### 4.9 `.gitignore`
 
-`/CONTEXT.md` (the original private blueprint, root only — scoped so this documentation file stays tracked), `.DS_Store`, `data/` (local parquet artifacts from the pre-Databricks era), `.env` (OpenAI key and Databricks PAT). `api/.gitignore` additionally ignores `api/.venv`.
+`/CONTEXT.md` (the original private blueprint, root only — scoped so this documentation file stays tracked), `.DS_Store`, `data/` (local parquet artifacts from the pre-Databricks era), `.env` (OpenAI key and Databricks PAT), `.ruff_cache/` / `ruff_cache/` (Ruff lint cache). `api/.gitignore` additionally ignores `api/.venv`. `gridironlab/.gitignore` covers `node_modules/` and Vite build output.
 
 ### 4.10 `api/` — FASTAPI SERVING LAYER
 
@@ -218,24 +221,47 @@ Swagger UI at `/docs`, ReDoc at `/redoc`, liveness/readiness at `/health`.
 
 **`models.py`.** Pydantic v2 response models. `PlayerWeek` maps all 72 Gold columns (nullable stats stay `null`, never coerced to 0). `Prediction` maps all 23 predictions columns including `insight` / `insight_source`. List endpoints wrap `total` / `limit` / `offset` / `items`.
 
-**`main.py`.** CORS enabled for the future React app. Endpoints:
+**`main.py`.** CORS enabled (`CORS_ORIGINS`, default `*`) for the React app. Endpoints:
 
 | Method | Path | Behavior |
 |---|---|---|
 | GET | `/health` | Warehouse `SELECT 1` plus a probe of both Gold tables. Missing creds → `unconfigured`; query failure → `disconnected`. Always HTTP 200 with a status payload (the API process is up). |
 | GET | `/api/players` | Latest appearance per `player_id` (`ROW_NUMBER` on season/week desc). Filters: `position`, `team`. Paginated (`limit` default 50, max 500, `offset`). |
-| GET | `/api/players/{player_id}` | Latest week + career summary (`games_played`, `career_ppg`, `career_high`). **404** if unknown. |
+| GET | `/api/players/{player_id}` | Latest week nested as `latest_week`, plus `career` (`games_played`, `career_ppg`, `career_high`, `first_season`, `last_season`). **404** if unknown. |
 | GET | `/api/players/{player_id}/history` | All player-weeks, optional `season` filter, paginated. **404** if unknown. |
 | GET | `/api/predictions` | Latest `(season, week)` in the predictions table. Filters: `position`, `team`, `min_projected_ppr`. Served from the 1-hour in-memory cache after the first warehouse hit (~269 rows). |
 | GET | `/api/predictions/top/{n}` | Same cache, ranked by `projected_ppr` (`n` 1–100). Registered before `/{player_id}` so `top` is not parsed as an id. |
 | GET | `/api/predictions/{player_id}` | Cache lookup, then a targeted SQL fallback. **404** if none. |
 | GET | `/api/weeks/latest` | Max `(season, week)` in `player_weeks`, then the week endpoint. |
 | GET | `/api/weeks/{season}/{week}` | All Gold rows for that week, filters `position`/`team`, paginated, ordered by `fantasy_points_ppr` desc. Empty `items` (not 404) when the week has no rows. |
-| GET | `/api/teams/{team_abbr}` | Latest player-week per player currently on that team, left-joined to the latest prediction week. |
+| GET | `/api/teams/{team_abbr}` | Latest player-week per player currently on that team, left-joined to the latest prediction week. Response key is **`players`** (not `items`). |
 
 `player_weeks` filters are applied in SQL (29k rows). Predictions are filtered in memory after one cached full-week fetch. Collection misses return empty arrays; resource-by-id misses return 404; Databricks errors return 500; missing credentials return 503.
 
 **`requirements.txt`.** Pinned: `fastapi==0.104.1`, `uvicorn[standard]==0.24.0`, `databricks-sql-connector==3.0.0`, `python-dotenv==1.0.0`, `pydantic==2.5.0`.
+
+### 4.11 `gridironlab/` — REACT DASHBOARD
+
+Vite + React + TypeScript + Tailwind v4. The production UI for projections, rankings, player profiles, team rosters, weekly actuals, and model details. Lives in `gridironlab/` at the repo root.
+
+Run from `gridironlab/`:
+
+```
+npm install
+npm run dev
+```
+
+Vite on http://localhost:5173. API base is `VITE_API_URL` or `http://localhost:8000`.
+
+**Data contract.** `src/services/predictionService.ts` fetches `GET /api/predictions?limit=500` (latest week in the predictions table — not a hardcoded season). `playerService.ts` reads `/api/players/{id}` (`career` nested) and `/api/players/{id}/history` (`items`). `teamService.ts` reads `/api/teams/{abbr}` (`players` array). If any of those fail or return empty, the UI falls back to a bundled 10-player 2025 Week 17 sample in `src/services/sampleData.ts`. The sidebar footer shows **Live data** vs **Sample data**.
+
+**Latest-week semantics.** The dashboard never stores a week number. After `insights_pipeline` (or the 2026 slate builder) writes a newer `(season, week)` partition, the API's `_latest_slate` (`ORDER BY season DESC, week DESC`) serves it. Two caches sit in front of that: API in-memory TTL (default 3600s) and a session-level promise cache in `predictionService.ts`. Restart uvicorn and refresh the browser tab to see a new week immediately. No frontend deploy is required.
+
+**Routes** (`src/App.tsx`): `/` dashboard, `/rankings`, `/players/:playerId`, `/teams/:abbr`, `/slate` (actual PPR leaderboard), `/model` (XGBoost + MAE + GPT-5.6 Terra, the only place the model name is shown).
+
+**Layout.** `src/components/` reusable UI; `src/pages/` one file per route; `src/types/` interfaces; `src/hooks/` `usePredictions` / `usePlayerDetail` / `useTeamRoster`; `src/styles/tokens.css` design tokens. Semantic color only: lime = projection, teal = model insight, green = positive delta, red = risk/miss.
+
+**Gotchas already fixed in the UI:** sticky table headers must not use `overflow-x: auto` wrappers as their containing block (first-row overlap); team roster mapping must read `players`, not `items`; player career stats live under `career`, not the top-level detail object.
 
 ---
 
@@ -292,8 +318,9 @@ Top predictive features (walk-forward): `fantasy_points_5wk_avg`, `fantasy_point
 
 ## 8. Operations
 
-- **Weekly in-season cadence (recommended job):** Tuesday mornings after Monday Night Football — `feature_building` → `walk_forward_model` (optional monitoring) → `insights_pipeline`. The API cache TTL is 1 hour, so a warehouse write is visible to clients within that window (or after a process restart).
-- **2026 Week 1:** run the slate builder in the first week of September 2026 (after final roster cuts and firm Vegas lines).
+- **Weekly in-season cadence (recommended job):** Tuesday mornings after Monday Night Football — `feature_building` → `walk_forward_model` (optional monitoring) → `insights_pipeline`. The API cache TTL is 1 hour, so a warehouse write is visible to the dashboard within that window (or after an API process restart + browser refresh). The React app does not need a rebuild.
+- **2026 Week 1:** run the slate builder in the first week of September 2026 (after final roster cuts and firm Vegas lines). That partition becomes the UI slate automatically because the API always serves max `(season, week)`.
+- **Local UI:** `cd gridironlab && npm install && npm run dev`. Requires the API on `:8000` for live data.
 - **Cluster packages:** `nfl_data_py` (install with `--no-deps`, then `appdirs fastparquet`), `xgboost`, `scikit-learn`, `matplotlib`, `openai`.
 - **API packages:** see `api/requirements.txt`. Local run: `cd api && python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && cp .env.example .env` then fill warehouse hostname / HTTP path / PAT.
 - **Secrets:** OpenAI key in `insights/.env` (git-ignored) or Databricks secret scope `openai-creds`, key name `api-key`. Databricks PAT in `api/.env` (`DATABRICKS_ACCESS_TOKEN`).

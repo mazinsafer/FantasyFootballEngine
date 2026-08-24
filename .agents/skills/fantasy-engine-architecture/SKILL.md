@@ -25,8 +25,9 @@ description: >-
 3. **FastAPI serving layer** (`api/`, implemented)
    - Queries Unity Catalog Delta tables directly via the Databricks SQL Connector (no Lakebase / SQLAlchemy copy).
    - Endpoints: `/health`, `/api/players`, `/api/predictions`, `/api/weeks`, `/api/teams`. Run with `uvicorn main:app --reload --host 0.0.0.0 --port 8000` from `api/`.
-4. **React TypeScript frontend**
-   - Dashboard fetches from FastAPI endpoints to display projections and LLM insights.
+4. **React TypeScript frontend** (`gridironlab/`, implemented)
+   - Vite dashboard at `:5173`. Fetches the latest prediction week from FastAPI; falls back to bundled sample data if the API is down.
+   - No hardcoded season/week — a new predictions partition is enough for the UI to update (after API cache + browser refresh).
 
 ## Accuracy Targets (Walk-Forward Validation, MAE)
 
