@@ -1,0 +1,6 @@
+/CONTEXT.md
+.DS_Store
+data/
+.env
+__pycache__/
+.ipynb_checkpoints/
