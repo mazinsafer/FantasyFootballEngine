@@ -9,8 +9,9 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from typing import Any, Optional
+from urllib.parse import parse_qsl, urlencode
 
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, HTTPException, Path, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -98,6 +99,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def drop_blank_query_params(request: Request, call_next):
+    """Swagger Try-it-out sends unused optional filters as empty strings (422)."""
+    raw = request.scope.get("query_string", b"")
+    if raw:
+        kept = [
+            (key, value)
+            for key, value in parse_qsl(raw.decode(), keep_blank_values=True)
+            if value.strip() != ""
+        ]
+        request.scope["query_string"] = urlencode(kept).encode()
+    return await call_next(request)
 
 
 @app.exception_handler(DatabricksNotConfiguredError)
@@ -485,7 +500,7 @@ def list_predictions(
     position: Optional[str] = Query(None, description="Filter by position (QB, RB, WR, TE)"),
     team: Optional[str] = Query(None, description="Filter by NFL team abbreviation"),
     min_projected_ppr: Optional[float] = Query(
-        None, alias="min_projected_ppr", description="Minimum projected PPR points"
+        None, description="Minimum projected PPR points"
     ),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(0, ge=0),

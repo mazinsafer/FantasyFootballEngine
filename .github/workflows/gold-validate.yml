@@ -1,0 +1,53 @@
+name: Gold table validation
+
+# Read-only checks against Unity Catalog (row counts, unique keys, QB/TE
+# starter filter, required columns). Needs a running SQL warehouse.
+
+on:
+  schedule:
+    - cron: "0 15 * * 2"
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/gold-validate.yml"
+      - ".github/scripts/validate_gold.py"
+      - "api/database.py"
+      - "api/config.py"
+  pull_request:
+    paths:
+      - ".github/workflows/gold-validate.yml"
+      - ".github/scripts/validate_gold.py"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Gold Delta tables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+
+      - name: Install API dependencies
+        working-directory: api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Gold checks
+        env:
+          DATABRICKS_SERVER_HOSTNAME: ${{ secrets.DATABRICKS_SERVER_HOSTNAME }}
+          DATABRICKS_HTTP_PATH: ${{ secrets.DATABRICKS_HTTP_PATH }}
+          DATABRICKS_ACCESS_TOKEN: ${{ secrets.DATABRICKS_ACCESS_TOKEN }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] || [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            python .github/scripts/validate_gold.py --strict
+          else
+            python .github/scripts/validate_gold.py
+          fi

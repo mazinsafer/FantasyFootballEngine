@@ -1,0 +1,55 @@
+name: Weekly pipeline
+
+# The feature + insights pipeline lives in Databricks, not GitHub Actions:
+#   feature_building.ipynb → (optional walk_forward_model) → insights_pipeline.ipynb
+# Tuesday 10:00 America/Chicago after Monday Night Football.
+#
+# Create a Databricks Job with those notebooks in order, then store:
+#   DATABRICKS_SERVER_HOSTNAME
+#   DATABRICKS_ACCESS_TOKEN
+#   DATABRICKS_WEEKLY_JOB_ID
+# as GitHub Actions secrets. Until those exist, this workflow no-ops.
+
+on:
+  schedule:
+    - cron: "0 15 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trigger:
+    name: Trigger Databricks weekly job
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start Databricks job
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_SERVER_HOSTNAME }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_ACCESS_TOKEN }}
+          JOB_ID: ${{ secrets.DATABRICKS_WEEKLY_JOB_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABRICKS_HOST:-}" ] || [ -z "${DATABRICKS_TOKEN:-}" ] || [ -z "${JOB_ID:-}" ]; then
+            echo "Skipping: set GitHub secrets DATABRICKS_SERVER_HOSTNAME,"
+            echo "DATABRICKS_ACCESS_TOKEN, and DATABRICKS_WEEKLY_JOB_ID to"
+            echo "trigger the Databricks weekly job from this workflow."
+            echo "Until then, run feature_building → insights_pipeline as a Databricks Job."
+            exit 0
+          fi
+
+          HOST="${DATABRICKS_HOST#https://}"
+          echo "Triggering Databricks job ${JOB_ID} on ${HOST}"
+          response="$(curl -sS -X POST "https://${HOST}/api/2.1/jobs/run-now" \
+            -H "Authorization: Bearer ${DATABRICKS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"job_id\": ${JOB_ID}}")"
+          echo "${response}"
+          echo "${response}" | python3 -c '
+          import json, sys
+          payload = json.load(sys.stdin)
+          if "run_id" not in payload:
+              print("Databricks job trigger failed:", payload)
+              sys.exit(1)
+          print("Started run_id", payload["run_id"])
+          '

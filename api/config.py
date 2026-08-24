@@ -54,8 +54,9 @@ def get_settings() -> Settings:
         server_hostname=os.getenv("DATABRICKS_SERVER_HOSTNAME", "").strip(),
         http_path=os.getenv("DATABRICKS_HTTP_PATH", "").strip(),
         access_token=os.getenv("DATABRICKS_ACCESS_TOKEN", "").strip(),
-        catalog=os.getenv("DATABRICKS_CATALOG", "fantasy_football").strip(),
-        schema=os.getenv("DATABRICKS_SCHEMA", "gold").strip(),
+        catalog=os.getenv("DATABRICKS_CATALOG", "fantasy_football").strip()
+        or "fantasy_football",
+        schema=os.getenv("DATABRICKS_SCHEMA", "gold").strip() or "gold",
         cors_origins=_split_origins(os.getenv("CORS_ORIGINS", "*")),
         cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", "3600")),
     )
