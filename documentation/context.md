@@ -179,8 +179,9 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 **Cell 3 — Predictions table.** Standard leakage guard, weeks ≤ 17. Targets the most recent completed fantasy week W of the latest season: train on everything strictly before W−1 (all prior seasons + current season ≤ W−2), early-stop on W−1, predict W — the exact fold layout validated in 4.4, with its tuned hyperparameters. Builds `predictions_df` = identifiers + `projected_ppr` (clipped ≥ 0, rounded 1dp) + `actual_ppr` (retrospective) + 12 context columns for RAG. Writes to `fantasy_football.gold.predictions` with `replaceWhere` on `(season, week)` — history-table semantics.
 
 **Cell 5 — RAG insights.**
-- `OPENAI_MODEL_ID = 'gpt-5.6-terra'` — the explicit Terra id. **Do not use the `gpt-5.6` alias — it routes to Sol** (the flagship, ~6x the price). Terra: ~$2/M input, $12/M output tokens.
-- API key resolution: `OPENAI_API_KEY` env var first, then Databricks secret scope `openai` / key `api-key` (`databricks secrets create-scope openai` + `databricks secrets put-secret openai api-key`).
+- `OPENAI_MODEL = 'gpt-5.6-terra'` — the explicit Terra id. **Do not use the `gpt-5.6` alias — it routes to Sol** (the flagship, ~6x the price). Terra: ~$2/M input, $12/M output tokens.
+- API key resolution (in order): a `.env` file loaded via `python-dotenv` (`OPENAI_API_KEY`, optional `OPENAI_API_BASE` for a custom endpoint), Databricks secret scope `openai-creds` / key `api-key`, then the plain environment variable. `.env` files are git-ignored at the repo root.
+- Calls use the **Responses API** — GPT-5.6 models are reasoning models and reject Chat Completions parameters like `temperature`/`max_tokens`.
 - `build_prompt(row)` — the AUGMENT step: injects projection, 3-week form, prev-season average, Vegas (implied total / spread / win prob), opponent defense PPG allowed to the position, depth chart rank, venue and weather. Instructs the LLM to write 2–3 sentences using ONLY the provided data (one supporting factor, one risk factor, no invented news).
 - `make_llm()` — smoke-tests the OpenAI Responses API (`client.responses.create` with `reasoning={'effort':'low'}`, `max_output_tokens=500`, `store=False`); on any failure returns the offline path.
 - `template_insight(row)` — deterministic fallback so the pipeline always completes end-to-end without a key.
@@ -254,5 +255,5 @@ Top predictive features (walk-forward): `fantasy_points_5wk_avg`, `fantasy_point
 - **Weekly in-season cadence (recommended job):** Tuesday mornings after Monday Night Football — `feature_building` → `walk_forward_model` (optional monitoring) → `insights_pipeline`.
 - **2026 Week 1:** run the slate builder in the first week of September 2026 (after final roster cuts and firm Vegas lines).
 - **Cluster packages:** `nfl_data_py` (install with `--no-deps`, then `appdirs fastparquet`), `xgboost`, `scikit-learn`, `matplotlib`, `openai`.
-- **Secrets:** OpenAI key in secret scope `openai`, key name `api-key`.
+- **Secrets:** OpenAI key in a `.env` file (git-ignored) or Databricks secret scope `openai-creds`, key name `api-key`.
 - **Accuracy targets** (from the blueprint, per-week MAE achieved ✅): the engine's 4.88 overall / per-position results in section 6 are competitive with industry projection systems.
