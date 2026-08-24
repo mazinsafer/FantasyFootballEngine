@@ -1,18 +1,18 @@
 # Fantasy Football ML Prediction Engine — Complete Project Documentation
 
-Last updated: August 23, 2026. This document describes exactly how every file in the repository works, the data contracts between them, the rules that must never be broken, and the current state of the project.
+Last updated: August 24, 2026. This document describes exactly how every file in the repository works, the data contracts between them, the rules that must never be broken, and the current state of the project.
 
 ---
 
 ## 1. Project Overview
 
-An end-to-end machine learning system that predicts weekly NFL fantasy football points (full-PPR scoring) for QB/RB/WR/TE, explains those predictions with LLM-generated insights, and stores everything in Databricks Delta tables for a future FastAPI + React serving layer.
+An end-to-end machine learning system that predicts weekly NFL fantasy football points (full-PPR scoring) for QB/RB/WR/TE, explains those predictions with LLM-generated insights, stores everything in Databricks Delta tables, and serves it over FastAPI. A React dashboard is the remaining phase.
 
 **Pipeline phases (from the project blueprint):**
 
 1. **Data layer (Databricks medallion)** — ingest raw NFL data, engineer features, store as a Gold Delta table. ✅ Done
 2. **ML + LLM insights** — XGBoost models trained on Gold, GPT-5.6 Terra insights via the OpenAI API, results in a `predictions` Delta table. ✅ Done
-3. **FastAPI serving layer** — sync predictions to Lakebase (managed Postgres), serve via `/api/predictions/{player_id}`. ⬜ Not started
+3. **FastAPI serving layer** — `api/` reads Gold Delta tables through the Databricks SQL Connector (no Lakebase sync). ✅ Done
 4. **React TypeScript frontend** — dashboard displaying projections + insights. ⬜ Not started
 
 **Runtime environment:** Databricks (Unity Catalog + Delta). The notebooks originated as local Jupyter notebooks working against parquet files and were migrated; all table I/O now goes through `spark.table(...)` / `saveAsTable(...)`.
@@ -45,7 +45,10 @@ fantasy_football.gold.player_weeks        ← Gold Delta table (~29k rows, 2020�
         └─ insights/insights_pipeline.ipynb         (production predictions + insights)
                 │  writes (replaceWhere per season/week — history table)
                 ▼
-        fantasy_football.gold.predictions  ← seeds the future UI
+        fantasy_football.gold.predictions
+                │  read by (Databricks SQL Connector, SELECT only)
+                ▼
+        api/  FastAPI on :8000                      ← seeds the future UI
 ```
 
 ---
@@ -62,7 +65,7 @@ One row per player per game played, seasons 2020–2025, weeks 1–22 (model not
 
 ### `fantasy_football.gold.predictions`
 
-**History table, never fully overwritten.** Keyed by `(season, week, player_id)`. Writers use `mode("overwrite")` with `option("replaceWhere", "season = X AND week = Y")` so each run replaces only its own week's partition. The 2025 Week 17 rows are the permanent seed data for the future UI. Columns: identifiers + `projected_ppr`, `actual_ppr` (null/absent for future weeks), context features used for RAG (`implied_total`, `team_spread`, `team_win_prob`, `is_home`, `temp`, `wind`, `is_bad_weather`, `is_dome`, `fantasy_points_3wk_avg`, `depth_chart_rank`, `opp_def_ppg_allowed`, `prev_season_ppg`), and `insight` / `insight_source` (LLM text, top 15 players per week; `mergeSchema` enabled for the insight columns).
+**History table, never fully overwritten.** Keyed by `(season, week, player_id)`. Writers use `mode("overwrite")` with `option("replaceWhere", "season = X AND week = Y")` so each run replaces only its own week's partition. The 2025 Week 17 rows are the permanent seed data for the API/UI. Columns: identifiers + `projected_ppr`, `actual_ppr` (null/absent for future weeks), context features used for RAG (`implied_total`, `team_spread`, `team_win_prob`, `is_home`, `temp`, `wind`, `is_bad_weather`, `is_dome`, `fantasy_points_3wk_avg`, `depth_chart_rank`, `opp_def_ppg_allowed`, `prev_season_ppg`), and `insight` / `insight_source` (LLM text, top 15 players per week; `mergeSchema` enabled for the insight columns).
 
 ---
 
@@ -195,7 +198,44 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 
 ### 4.9 `.gitignore`
 
-`/CONTEXT.md` (the original private blueprint, root only — scoped so this documentation file stays tracked), `.DS_Store`, `data/` (local parquet artifacts from the pre-Databricks era).
+`/CONTEXT.md` (the original private blueprint, root only — scoped so this documentation file stays tracked), `.DS_Store`, `data/` (local parquet artifacts from the pre-Databricks era), `.env` (OpenAI key and Databricks PAT). `api/.gitignore` additionally ignores `api/.venv`.
+
+### 4.10 `api/` — FASTAPI SERVING LAYER
+
+Read-only HTTP API over the two Gold Delta tables. Lives on the `backend` branch. The original blueprint called for syncing predictions into Lakebase (managed Postgres) and querying via SQLAlchemy; the implemented design skips that extra copy and queries Unity Catalog directly with the **Databricks SQL Connector**. The SQL warehouse must be running, and the PAT needs `SELECT` on both Gold tables.
+
+Run from `api/` (Python 3.10–3.12; pinned deps predate 3.13):
+
+```
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Swagger UI at `/docs`, ReDoc at `/redoc`, liveness/readiness at `/health`.
+
+**`config.py`.** Loads `api/.env` (then repo-root `.env`) via `python-dotenv`. Required: `DATABRICKS_SERVER_HOSTNAME`, `DATABRICKS_HTTP_PATH`, `DATABRICKS_ACCESS_TOKEN`. Optional: `DATABRICKS_CATALOG` (default `fantasy_football`), `DATABRICKS_SCHEMA` (default `gold`), `CORS_ORIGINS` (default `*`), `CACHE_TTL_SECONDS` (default 3600). Table names are interpolated only from these config values, never from request input.
+
+**`database.py`.** Connection manager — `sql.connect(...)` inside a context manager so every request opens and closes the warehouse connection; nothing is left open. `execute_query` / `execute_query_one` log the compacted SQL + bind params, use `?` placeholders, and convert Databricks `Decimal` → `float` (or `int` for `season`/`week`/`depth_chart_rank`/`wr1_wr2_healthy`) and NaN → `None` so JSON serialization is valid. `TTLCache` holds the latest-week predictions payload in process memory.
+
+**`models.py`.** Pydantic v2 response models. `PlayerWeek` maps all 72 Gold columns (nullable stats stay `null`, never coerced to 0). `Prediction` maps all 23 predictions columns including `insight` / `insight_source`. List endpoints wrap `total` / `limit` / `offset` / `items`.
+
+**`main.py`.** CORS enabled for the future React app. Endpoints:
+
+| Method | Path | Behavior |
+|---|---|---|
+| GET | `/health` | Warehouse `SELECT 1` plus a probe of both Gold tables. Missing creds → `unconfigured`; query failure → `disconnected`. Always HTTP 200 with a status payload (the API process is up). |
+| GET | `/api/players` | Latest appearance per `player_id` (`ROW_NUMBER` on season/week desc). Filters: `position`, `team`. Paginated (`limit` default 50, max 500, `offset`). |
+| GET | `/api/players/{player_id}` | Latest week + career summary (`games_played`, `career_ppg`, `career_high`). **404** if unknown. |
+| GET | `/api/players/{player_id}/history` | All player-weeks, optional `season` filter, paginated. **404** if unknown. |
+| GET | `/api/predictions` | Latest `(season, week)` in the predictions table. Filters: `position`, `team`, `min_projected_ppr`. Served from the 1-hour in-memory cache after the first warehouse hit (~269 rows). |
+| GET | `/api/predictions/top/{n}` | Same cache, ranked by `projected_ppr` (`n` 1–100). Registered before `/{player_id}` so `top` is not parsed as an id. |
+| GET | `/api/predictions/{player_id}` | Cache lookup, then a targeted SQL fallback. **404** if none. |
+| GET | `/api/weeks/latest` | Max `(season, week)` in `player_weeks`, then the week endpoint. |
+| GET | `/api/weeks/{season}/{week}` | All Gold rows for that week, filters `position`/`team`, paginated, ordered by `fantasy_points_ppr` desc. Empty `items` (not 404) when the week has no rows. |
+| GET | `/api/teams/{team_abbr}` | Latest player-week per player currently on that team, left-joined to the latest prediction week. |
+
+`player_weeks` filters are applied in SQL (29k rows). Predictions are filtered in memory after one cached full-week fetch. Collection misses return empty arrays; resource-by-id misses return 404; Databricks errors return 500; missing credentials return 503.
+
+**`requirements.txt`.** Pinned: `fastapi==0.104.1`, `uvicorn[standard]==0.24.0`, `databricks-sql-connector==3.0.0`, `python-dotenv==1.0.0`, `pydantic==2.5.0`.
 
 ---
 
@@ -207,7 +247,7 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 4. **Weeks 1–17 only.** Week 18 starters rest; weeks 19–22 are playoffs. Excluded from training and evaluation everywhere.
 5. **Time-ordered splits only.** Walk-forward fold: train ≤ W−2, early-stop on W−1, predict W. Never shuffle, never tune on test weeks (tuning uses weeks 5–10; testing uses 11–17).
 6. **QB/TE starters only** (depth_chart_rank == 1) in the Gold table; RB/WR keep all depth ranks.
-7. **Secrets never in code.** OpenAI key via env var or Databricks secret scope; AWS creds (if ever needed again) likewise.
+7. **Secrets never in code.** OpenAI key via env var or Databricks secret scope; Databricks PAT in `api/.env`; AWS creds (if ever needed again) likewise.
 
 ---
 
@@ -252,8 +292,9 @@ Top predictive features (walk-forward): `fantasy_points_5wk_avg`, `fantasy_point
 
 ## 8. Operations
 
-- **Weekly in-season cadence (recommended job):** Tuesday mornings after Monday Night Football — `feature_building` → `walk_forward_model` (optional monitoring) → `insights_pipeline`.
+- **Weekly in-season cadence (recommended job):** Tuesday mornings after Monday Night Football — `feature_building` → `walk_forward_model` (optional monitoring) → `insights_pipeline`. The API cache TTL is 1 hour, so a warehouse write is visible to clients within that window (or after a process restart).
 - **2026 Week 1:** run the slate builder in the first week of September 2026 (after final roster cuts and firm Vegas lines).
 - **Cluster packages:** `nfl_data_py` (install with `--no-deps`, then `appdirs fastparquet`), `xgboost`, `scikit-learn`, `matplotlib`, `openai`.
-- **Secrets:** OpenAI key in a `.env` file (git-ignored) or Databricks secret scope `openai-creds`, key name `api-key`.
+- **API packages:** see `api/requirements.txt`. Local run: `cd api && python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && cp .env.example .env` then fill warehouse hostname / HTTP path / PAT.
+- **Secrets:** OpenAI key in `insights/.env` (git-ignored) or Databricks secret scope `openai-creds`, key name `api-key`. Databricks PAT in `api/.env` (`DATABRICKS_ACCESS_TOKEN`).
 - **Accuracy targets** (from the blueprint, per-week MAE achieved ✅): the engine's 4.88 overall / per-position results in section 6 are competitive with industry projection systems.
