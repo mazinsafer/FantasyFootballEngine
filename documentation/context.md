@@ -42,7 +42,7 @@ fantasy_football.gold.player_weeks        ← Gold Delta table (~29k rows, 2020�
         ├─ model-eval/walk_forward_model.ipynb      (tuning + honest evaluation)
         ├─ model-eval/week1_prediction.ipynb        (2025 wk1 cold-start validation)
         ├─ model-eval/week1_2026_slate_builder.py   (future 2026 wk1 slate)
-        └─ bedrock/insights_pipeline.ipynb          (production predictions + insights)
+        └─ insights/insights_pipeline.ipynb         (production predictions + insights)
                 │  writes (replaceWhere per season/week — history table)
                 ▼
         fantasy_football.gold.predictions  ← seeds the future UI
@@ -172,9 +172,9 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 - **QB/TE starter filter:** backup QBs and TEs (depth_chart_rank ≠ 1) are dropped from the slate, matching the Gold table's business rule — the model was trained exclusively on starter QB/TE rows.
 - **Production schedule:** run in the **first week of September 2026** — before final roster cuts (~Sept 1) depth charts show camp bodies and Vegas lines are preliminary.
 
-### 4.7 `bedrock/insights_pipeline.ipynb` (6 cells) — PRODUCTION PREDICTIONS + LLM INSIGHTS
+### 4.7 `insights/insights_pipeline.ipynb` (6 cells) — PRODUCTION PREDICTIONS + LLM INSIGHTS
 
-(The folder is still named `bedrock/` for git-history reasons; as of Aug 23, 2026 the LLM calls go to the **OpenAI API directly** — the Bedrock route required an account-level marketplace subscription for GPT-5.6 that never finished provisioning.)
+(Formerly `bedrock/insights_pipeline.ipynb`. LLM calls go to the **OpenAI API directly** — the original Bedrock route required an account-level marketplace subscription for GPT-5.6 that never finished provisioning, so it was abandoned. The API key lives in `insights/.env`, which is git-ignored.)
 
 **Cell 3 — Predictions table.** Standard leakage guard, weeks ≤ 17. Targets the most recent completed fantasy week W of the latest season: train on everything strictly before W−1 (all prior seasons + current season ≤ W−2), early-stop on W−1, predict W — the exact fold layout validated in 4.4, with its tuned hyperparameters. Builds `predictions_df` = identifiers + `projected_ppr` (clipped ≥ 0, rounded 1dp) + `actual_ppr` (retrospective) + 12 context columns for RAG. Writes to `fantasy_football.gold.predictions` with `replaceWhere` on `(season, week)` — history-table semantics.
 
