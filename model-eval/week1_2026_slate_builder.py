@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "5"
+# ///
 # DBTITLE 1,Introduction
 # MAGIC %md
 # MAGIC # 2026 Week 1 Slate Builder + Prediction
@@ -24,8 +28,20 @@
 # COMMAND ----------
 
 # DBTITLE 1,Install dependencies
-# Install required packages
-%pip install nfl_data_py xgboost scikit-learn
+# Install nfl_data_py dependencies (pandas/numpy are pre-installed core packages)
+# nfl_data_py requires pandas<2.0 but works fine with 2.x, so we skip that constraint
+%pip install appdirs fastparquet xgboost
+%pip install --no-deps nfl_data_py
+
+# Verify imports
+import nfl_data_py as nfl
+import pandas as pd
+import numpy as np
+from xgboost import XGBRegressor
+
+print(f"✓ All packages imported successfully")
+print(f"  pandas: {pd.__version__}")
+print(f"  numpy: {np.__version__}")
 
 # COMMAND ----------
 
@@ -351,8 +367,26 @@ print(predictions_df[['player_name', 'position', 'recent_team', 'projected_ppr']
 # DBTITLE 1,Write predictions to Delta table
 print("\nWriting 2026 Week 1 predictions to fantasy_football.gold.predictions...")
 
+from pyspark.sql.functions import col
+from pyspark.sql.types import IntegerType, DoubleType
+
 # Convert to Spark DataFrame
 predictions_spark = spark.createDataFrame(predictions_df)
+
+# Cast columns to match existing table schema (fix DELTA_FAILED_TO_MERGE_FIELDS)
+predictions_spark = predictions_spark \
+    .withColumn("week", col("week").cast(IntegerType())) \
+    .withColumn("is_home", col("is_home").cast(DoubleType())) \
+    .withColumn("temp", col("temp").cast(DoubleType())) \
+    .withColumn("wind", col("wind").cast(DoubleType())) \
+    .withColumn("is_bad_weather", col("is_bad_weather").cast(DoubleType())) \
+    .withColumn("is_dome", col("is_dome").cast(DoubleType())) \
+    .withColumn("opp_def_ppg_allowed", col("opp_def_ppg_allowed").cast(DoubleType())) \
+    .withColumn("fantasy_points_3wk_avg", col("fantasy_points_3wk_avg").cast(DoubleType()))
+
+# Drop the missing_vegas_lines column (not in target table)
+if "missing_vegas_lines" in predictions_spark.columns:
+    predictions_spark = predictions_spark.drop("missing_vegas_lines")
 
 # MERGE into predictions table (history table, not snapshot)
 # Use replaceWhere to partition by (season=2026, week=1)
