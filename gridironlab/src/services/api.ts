@@ -3,9 +3,9 @@ const API_BASE =
 
 export type DataSource = 'live' | 'sample'
 
-/** Fetch JSON from the FastAPI backend with a short timeout so the UI can
- *  fall back to bundled sample data when the warehouse is not running. */
-export async function getJson<T>(path: string, timeoutMs = 2500): Promise<T> {
+/** Fetch JSON from the FastAPI backend. Timeout is long enough for a Render
+ *  cold start; if it still fails the UI falls back to bundled sample data. */
+export async function getJson<T>(path: string, timeoutMs = 20000): Promise<T> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {

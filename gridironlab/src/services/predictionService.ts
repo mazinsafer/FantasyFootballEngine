@@ -76,8 +76,14 @@ async function load(): Promise<PredictionsResult> {
   }
 }
 
-/** Predictions for the latest week (cached for the session). */
+/** Predictions for the latest week. Live responses are cached for the tab;
+ *  a sample fallback is not, so a later retry can still hit a warmed-up API. */
 export function fetchPredictions(): Promise<PredictionsResult> {
-  if (!cached) cached = load()
+  if (!cached) {
+    cached = load().then((result) => {
+      if (result.source !== 'live') cached = null
+      return result
+    })
+  }
   return cached
 }

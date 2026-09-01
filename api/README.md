@@ -13,7 +13,7 @@ The warehouse must be running, and the personal access token needs `SELECT` on b
 
 ## Setup
 
-Python 3.10–3.12 is recommended (the pinned packages predate Python 3.13).
+Python 3.10–3.12 is required (the pinned packages predate Python 3.13). Do not use 3.14 — `pydantic==2.5.0` has no wheel and the source build fails.
 
 ```bash
 cd api
@@ -73,3 +73,16 @@ Collection endpoints return an empty `items` array when filters match nothing. L
 - Databricks `Decimal` values are converted to `float` (or `int` for rank/week/season) before JSON serialization.
 - Nullable stats columns are returned as `null`, not omitted or coerced to zero.
 - CORS is enabled (`CORS_ORIGINS`, default `*`) so a local frontend can call the API.
+
+## Deploy on Render
+
+Create a **Web Service** with:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `api` |
+| Runtime | Python |
+| Build | `pip install -r requirements.txt` |
+| Start | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+
+Set `PYTHON_VERSION` to `3.12.8` (this repo also has `api/.python-version`). Then add the same Databricks variables as `.env.example`. After you have a CloudFront URL, set `CORS_ORIGINS` to that origin.
