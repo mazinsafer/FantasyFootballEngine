@@ -46,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("fantasy_api")
 
-MAX_LIMIT = 500
+MAX_LIMIT = 700
 DEFAULT_LIMIT = 50
 ERROR_RESPONSES = {
     404: {"model": ErrorResponse},

@@ -253,7 +253,7 @@ npm run dev
 
 Vite on http://localhost:5173. API base is `VITE_API_URL` or `http://localhost:8000`.
 
-**Data contract.** `src/services/predictionService.ts` fetches `GET /api/predictions?limit=500` (latest week in the predictions table — not a hardcoded season). `playerService.ts` reads `/api/players/{id}` (`career` nested) and `/api/players/{id}/history` (`items`). `teamService.ts` reads `/api/teams/{abbr}` (`players` array). If any of those fail or return empty, the UI falls back to a bundled 10-player 2025 Week 17 sample in `src/services/sampleData.ts`. The sidebar footer shows **Live data** vs **Sample data**.
+**Data contract.** `src/services/predictionService.ts` fetches `GET /api/predictions?limit=700` (latest week in the predictions table — not a hardcoded season). `playerService.ts` reads `/api/players/{id}` (`career` nested) and `/api/players/{id}/history` (`items`). `teamService.ts` reads `/api/teams/{abbr}` (`players` array). If any of those fail or return empty, the UI falls back to a bundled 10-player 2025 Week 17 sample in `src/services/sampleData.ts`. The sidebar footer shows **Live data** vs **Sample data**.
 
 **Latest-week semantics.** The dashboard never stores a week number. After `insights_pipeline` (or the 2026 slate builder) writes a newer `(season, week)` partition, the API's `_latest_slate` (`ORDER BY season DESC, week DESC`) serves it. Two caches sit in front of that: API in-memory TTL (default 3600s) and a session-level promise cache in `predictionService.ts`. Restart uvicorn and refresh the browser tab to see a new week immediately. No frontend deploy is required.
 

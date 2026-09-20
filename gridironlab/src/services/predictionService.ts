@@ -65,7 +65,7 @@ let cached: Promise<PredictionsResult> | null = null
 
 async function load(): Promise<PredictionsResult> {
   try {
-    const res = await getJson<{ items: ApiPredictionRow[] }>('/api/predictions?limit=500')
+    const res = await getJson<{ items: ApiPredictionRow[] }>('/api/predictions?limit=700')
     const items = res.items
       .map(mapRow)
       .sort((a, b) => b.projectedPpr - a.projectedPpr)
