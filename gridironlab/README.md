@@ -17,9 +17,23 @@ it falls back to a bundled 2025 Week 17 sample slate — the sidebar shows
 "Sample data" vs "Live data" accordingly.
 
 The dashboard always displays the **latest** `(season, week)` in
-`fantasy_football.gold.predictions`. Writing a new week (including 2026 Week 1)
-updates the UI without a frontend code change — restart or wait out the API's
-1-hour cache, then refresh the browser.
+`fantasy_football.gold.predictions`. Writing a new week updates the UI without
+a frontend code change — restart the API (or wait out its 1-hour cache), then
+refresh the browser.
+
+## Deploy
+
+Production is served from S3 + CloudFront at
+`https://d1mkvupgst3eb9.cloudfront.net`. The same distribution proxies `/api/*`
+to the ECS Fargate API, so live data is same-origin (no CORS).
+`.env.production` sets `VITE_API_URL` to the CloudFront URL for production
+builds. To ship a new build:
+
+```bash
+npm run build
+aws s3 sync dist s3://gridiron-lab --delete
+aws cloudfront create-invalidation --distribution-id E3PRKK3R468KYB --paths '/*'
+```
 
 ## Structure
 

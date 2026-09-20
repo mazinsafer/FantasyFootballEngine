@@ -1,6 +1,6 @@
 # Fantasy Football ML Prediction Engine — Complete Project Documentation
 
-Last updated: August 24, 2026. This document describes exactly how every file in the repository works, the data contracts between them, the rules that must never be broken, and the current state of the project. For a shorter onboarding path (quick start, repo map, weekly cadence), see the root [`README.md`](../README.md).
+Last updated: September 19, 2026. This document describes exactly how every file in the repository works, the data contracts between them, the rules that must never be broken, and the current state of the project. For a shorter onboarding path (quick start, repo map, weekly cadence), see the root [`README.md`](../README.md).
 
 ---
 
@@ -15,7 +15,7 @@ An end-to-end machine learning system that predicts weekly NFL fantasy football 
 3. **FastAPI serving layer** — `api/` reads Gold Delta tables through the Databricks SQL Connector (no Lakebase sync). ✅ Done
 4. **React TypeScript frontend** — `gridironlab/` dashboard displaying projections and LLM insights. ✅ Done
 
-**Runtime environment:** Databricks (Unity Catalog + Delta). The notebooks originated as local Jupyter notebooks working against parquet files and were migrated; all table I/O now goes through `spark.table(...)` / `saveAsTable(...)`. Local serving is FastAPI on `:8000` plus Vite on `:5173`.
+**Runtime environment:** Databricks (Unity Catalog + Delta). The notebooks originated as local Jupyter notebooks working against parquet files and were migrated; all table I/O now goes through `spark.table(...)` / `saveAsTable(...)`. Local serving is FastAPI on `:8000` plus Vite on `:5173`. **Production hosting is AWS (`us-east-1`):** the API runs on ECS Fargate behind an ALB, the frontend is static files in the `gridiron-lab` S3 bucket, and one CloudFront distribution (`d1mkvupgst3eb9.cloudfront.net`) serves both — S3 by default, `/api/*` proxied to the ALB (see 4.10/4.11).
 
 **Scoring formula (full PPR), used everywhere:**
 
@@ -41,17 +41,19 @@ fantasy_football.gold.player_weeks        ← Gold Delta table (~29k rows, 2020�
         ├─ model-eval/baseline_model.ipynb          (static-split benchmark)
         ├─ model-eval/walk_forward_model.ipynb      (tuning + honest evaluation)
         ├─ model-eval/week1_prediction.ipynb        (2025 wk1 cold-start validation)
-        ├─ model-eval/week1_2026_slate_builder.py   (future 2026 wk1 slate)
+        ├─ model-eval/week1_2026_slate_builder.py   (2026 wk1 slate)
+        ├─ model-eval/week2_2026_slate_builder.py   (2026 wk2 slate — current production)
         └─ insights/insights_pipeline.ipynb         (production predictions + insights)
                 │  writes (replaceWhere per season/week — history table)
                 ▼
         fantasy_football.gold.predictions
                 │  read by (Databricks SQL Connector, SELECT only)
                 ▼
-        api/  FastAPI on :8000                      ← latest (season, week) only
-                │
+        api/  FastAPI                               ← latest (season, week) only
+                │  (prod: ECS Fargate + ALB; local: :8000)
                 ▼
-        gridironlab/  Vite + React  :5173           ← live fetch, sample fallback
+        gridironlab/  Vite + React                  ← live fetch, sample fallback
+                (prod: S3 + CloudFront; local: :5173)
 ```
 
 ---
@@ -68,7 +70,7 @@ One row per player per game played, seasons 2020–2025, weeks 1–22 (model not
 
 ### `fantasy_football.gold.predictions`
 
-**History table, never fully overwritten.** Keyed by `(season, week, player_id)`. Writers use `mode("overwrite")` with `option("replaceWhere", "season = X AND week = Y")` so each run replaces only its own week's partition. The 2025 Week 17 rows are the permanent seed data for the API/UI. Columns: identifiers + `projected_ppr`, `actual_ppr` (null/absent for future weeks), context features used for RAG (`implied_total`, `team_spread`, `team_win_prob`, `is_home`, `temp`, `wind`, `is_bad_weather`, `is_dome`, `fantasy_points_3wk_avg`, `depth_chart_rank`, `opp_def_ppg_allowed`, `prev_season_ppg`), and `insight` / `insight_source` (LLM text, top 15 players per week; `mergeSchema` enabled for the insight columns).
+**History table, never fully overwritten.** Keyed by `(season, week, player_id)`. Writers use `mode("overwrite")` with `option("replaceWhere", "season = X AND week = Y")` so each run replaces only its own week's partition. The 2025 Week 17 rows are the permanent seed data; the latest partition is **2026 Week 2 (665 rows, the full slate)**. Columns: identifiers + `projected_ppr`, `actual_ppr` (null/absent for future weeks), context features used for RAG (`implied_total`, `team_spread`, `team_win_prob`, `is_home`, `temp`, `wind`, `is_bad_weather`, `is_dome`, `fantasy_points_3wk_avg`, `depth_chart_rank`, `opp_def_ppg_allowed`, `prev_season_ppg`), and `insight` / `insight_source` (LLM text, now generated for **every player in the slate**; `mergeSchema` enabled for the insight columns).
 
 ---
 
@@ -178,6 +180,8 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 - **QB/TE starter filter:** backup QBs and TEs (depth_chart_rank ≠ 1) are dropped from the slate, matching the Gold table's business rule — the model was trained exclusively on starter QB/TE rows.
 - **Production schedule:** run in the **first week of September 2026** — before final roster cuts (~Sept 1) depth charts show camp bodies and Vegas lines are preliminary.
 
+`model-eval/week2_2026_slate_builder.py` (added September 2026) is the Week 2 counterpart, built on the same slate-construction approach; it wrote the **665-player 2026 Week 2 partition that is the current production slate**, and every player in it has a GPT-5.6 Terra insight (see 4.7).
+
 ### 4.7 `insights/insights_pipeline.ipynb` (6 cells) — PRODUCTION PREDICTIONS + LLM INSIGHTS
 
 (Formerly `bedrock/insights_pipeline.ipynb`. LLM calls go to the **OpenAI API directly** — the original Bedrock route required an account-level marketplace subscription for GPT-5.6 that never finished provisioning, so it was abandoned. The API key lives in `insights/.env`, which is git-ignored.)
@@ -191,7 +195,7 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 - `build_prompt(row)` — the AUGMENT step: injects projection, 3-week form, prev-season average, Vegas (implied total / spread / win prob), opponent defense PPG allowed to the position, depth chart rank, venue and weather. Instructs the LLM to write 2–3 sentences using ONLY the provided data (one supporting factor, one risk factor, no invented news).
 - `make_llm()` — smoke-tests the OpenAI Responses API (`client.responses.create` with `reasoning={'effort':'low'}`, `max_output_tokens=500`, `store=False`); on any failure returns the offline path.
 - `template_insight(row)` — deterministic fallback so the pipeline always completes end-to-end without a key.
-- Insights generated for the **top 15** projected players (cost bound), merged back, written to the predictions table with `mergeSchema` (adds `insight`, `insight_source` columns).
+- Insights generated for **every player in the slate** (`N_INSIGHTS = len(predictions_df)`; originally capped at the top 15 as a cost bound), merged back, written to the predictions table with `mergeSchema` (adds `insight`, `insight_source` columns).
 
 ### 4.8 `.agents/skills/` — Cursor agent skills (project knowledge base)
 
@@ -205,7 +209,9 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 
 ### 4.10 `api/` — FASTAPI SERVING LAYER
 
-Read-only HTTP API over the two Gold Delta tables. Lives on the `backend` branch. The original blueprint called for syncing predictions into Lakebase (managed Postgres) and querying via SQLAlchemy; the implemented design skips that extra copy and queries Unity Catalog directly with the **Databricks SQL Connector**. The SQL warehouse must be running, and the PAT needs `SELECT` on both Gold tables.
+Read-only HTTP API over the two Gold Delta tables. The original blueprint called for syncing predictions into Lakebase (managed Postgres) and querying via SQLAlchemy; the implemented design skips that extra copy and queries Unity Catalog directly with the **Databricks SQL Connector**. The SQL warehouse must be running, and the PAT needs `SELECT` on both Gold tables.
+
+**Production deployment (AWS ECS Fargate, migrated from Render September 2026).** `api/Dockerfile` builds a Python 3.12-slim ARM64 image, pushed to ECR repo `gridiron-lab-api` (account `814251983407`, `us-east-1`). It runs as ECS service `gridiron-lab-api` on cluster `gridiron-lab` (one Fargate task, 0.25 vCPU / 512 MB, task definition in `api/ecs-task-def.json`). The three Databricks credentials are SSM Parameter Store SecureStrings under `/gridiron-lab/*`, injected at task start by `ecsTaskExecutionRole`. Traffic path: CloudFront `/api/*` behavior (caching disabled, all query strings forwarded) → ALB `gridiron-lab-alb` (HTTP :80, health check `/health`) → container :8000. The ALB security group only admits CloudFront origin-facing IPs, so the API is unreachable except over CloudFront HTTPS. Redeploy: rebuild + push the image, then `aws ecs update-service --cluster gridiron-lab --service gridiron-lab-api --force-new-deployment` (this restart also clears the in-memory cache).
 
 Run from `api/` (Python 3.10–3.12; pinned deps predate 3.13):
 
@@ -226,10 +232,10 @@ Swagger UI at `/docs`, ReDoc at `/redoc`, liveness/readiness at `/health`.
 | Method | Path | Behavior |
 |---|---|---|
 | GET | `/health` | Warehouse `SELECT 1` plus a probe of both Gold tables. Missing creds → `unconfigured`; query failure → `disconnected`. Always HTTP 200 with a status payload (the API process is up). |
-| GET | `/api/players` | Latest appearance per `player_id` (`ROW_NUMBER` on season/week desc). Filters: `position`, `team`. Paginated (`limit` default 50, max 500, `offset`). |
+| GET | `/api/players` | Latest appearance per `player_id` (`ROW_NUMBER` on season/week desc). Filters: `position`, `team`. Paginated (`limit` default 50, max 700, `offset`). |
 | GET | `/api/players/{player_id}` | Latest week nested as `latest_week`, plus `career` (`games_played`, `career_ppg`, `career_high`, `first_season`, `last_season`). **404** if unknown. |
 | GET | `/api/players/{player_id}/history` | All player-weeks, optional `season` filter, paginated. **404** if unknown. |
-| GET | `/api/predictions` | Latest `(season, week)` in the predictions table. Filters: `position`, `team`, `min_projected_ppr`. Served from the 1-hour in-memory cache after the first warehouse hit (~269 rows). |
+| GET | `/api/predictions` | Latest `(season, week)` in the predictions table. Filters: `position`, `team`, `min_projected_ppr`. Served from the 1-hour in-memory cache after the first warehouse hit (665 rows for 2026 Week 2). |
 | GET | `/api/predictions/top/{n}` | Same cache, ranked by `projected_ppr` (`n` 1–100). Registered before `/{player_id}` so `top` is not parsed as an id. |
 | GET | `/api/predictions/{player_id}` | Cache lookup, then a targeted SQL fallback. **404** if none. |
 | GET | `/api/weeks/latest` | Max `(season, week)` in `player_weeks`, then the week endpoint. |
@@ -251,7 +257,7 @@ npm install
 npm run dev
 ```
 
-Vite on http://localhost:5173. API base is `VITE_API_URL` or `http://localhost:8000`.
+Vite on http://localhost:5173. API base is `VITE_API_URL` or `http://localhost:8000`. **Production:** `gridironlab/.env.production` pins `VITE_API_URL` to `https://d1mkvupgst3eb9.cloudfront.net`; `npm run build` output is synced to the `gridiron-lab` S3 bucket and served by CloudFront distribution `E3PRKK3R468KYB`. Since the same distribution proxies `/api/*` to the Fargate API, the frontend and API are same-origin in production (no CORS). Ship a build with `aws s3 sync dist s3://gridiron-lab --delete` + a CloudFront invalidation.
 
 **Data contract.** `src/services/predictionService.ts` fetches `GET /api/predictions?limit=700` (latest week in the predictions table — not a hardcoded season). `playerService.ts` reads `/api/players/{id}` (`career` nested) and `/api/players/{id}/history` (`items`). `teamService.ts` reads `/api/teams/{abbr}` (`players` array). If any of those fail or return empty, the UI falls back to a bundled 10-player 2025 Week 17 sample in `src/services/sampleData.ts`. The sidebar footer shows **Live data** vs **Sample data**.
 
@@ -318,8 +324,9 @@ Top predictive features (walk-forward): `fantasy_points_5wk_avg`, `fantasy_point
 
 ## 8. Operations
 
-- **Weekly in-season cadence (recommended job):** Tuesday mornings after Monday Night Football — `feature_building` → `walk_forward_model` (optional monitoring) → `insights_pipeline`. The API cache TTL is 1 hour, so a warehouse write is visible to the dashboard within that window (or after an API process restart + browser refresh). The React app does not need a rebuild.
-- **2026 Week 1:** run the slate builder in the first week of September 2026 (after final roster cuts and firm Vegas lines). That partition becomes the UI slate automatically because the API always serves max `(season, week)`.
+- **Weekly in-season cadence (recommended job):** Tuesday mornings after Monday Night Football — `feature_building` → `walk_forward_model` (optional monitoring) → `insights_pipeline`. The API cache TTL is 1 hour, so a warehouse write is visible to the dashboard within that window — or immediately after `aws ecs update-service --cluster gridiron-lab --service gridiron-lab-api --force-new-deployment` + browser refresh. The React app does not need a rebuild.
+- **Future-week slates:** run the corresponding slate builder in `model-eval/` (e.g. `week2_2026_slate_builder.py`, which produced the current 665-player 2026 Week 2 slate). That partition becomes the UI slate automatically because the API always serves max `(season, week)`.
+- **Production infrastructure:** see 4.10 (API on ECS Fargate + ALB + CloudFront) and 4.11 (frontend on S3 + CloudFront). API redeploys go through ECR image push + ECS force-new-deployment; frontend deploys go through `npm run build` + S3 sync + CloudFront invalidation.
 - **Local UI:** `cd gridironlab && npm install && npm run dev`. Requires the API on `:8000` for live data.
 - **Cluster packages:** `nfl_data_py` (install with `--no-deps`, then `appdirs fastparquet`), `xgboost`, `scikit-learn`, `matplotlib`, `openai`.
 - **API packages:** see `api/requirements.txt`. Local run: `cd api && python3.12 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && cp .env.example .env` then fill warehouse hostname / HTTP path / PAT.

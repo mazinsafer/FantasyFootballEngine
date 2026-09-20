@@ -17,18 +17,20 @@ ingestion/feature_building.ipynb
         ▼
 fantasy_football.gold.player_weeks          ~29k player-weeks, 2020–2025
         │
-        ├─ model-eval/                      walk-forward eval + 2026 week-1 slate
+        ├─ model-eval/                      walk-forward eval + 2026 slate builders
         └─ insights/insights_pipeline.ipynb
                 │  replaceWhere (season, week)
                 ▼
         fantasy_football.gold.predictions   projections + model insights
                 │  Databricks SQL Connector
                 ▼
-        api/  FastAPI  :8000
+        api/  FastAPI                       ECS Fargate + ALB (local: :8000)
                 │
                 ▼
-        gridironlab/  React + TypeScript    latest week only
+        gridironlab/  React + TypeScript    S3 + CloudFront (local: :5173)
 ```
+
+Production is served from a single CloudFront distribution (`d1mkvupgst3eb9.cloudfront.net`): the frontend from the `gridiron-lab` S3 bucket, and `/api/*` proxied to the Fargate service behind an ALB. Deployment details: [`api/README.md`](api/README.md).
 
 Gold is rebuilt from scratch on every feature run. Predictions are a **history table**: each run replaces only its own `(season, week)` partition. The API always serves the newest `(season, week)` in that table. The UI has no hardcoded week — after you write a new partition, it picks it up on the next fetch (API cache TTL is one hour; refresh the browser tab).
 
@@ -40,11 +42,11 @@ Gold is rebuilt from scratch on every feature run. Predictions are a **history t
 | --- | --- |
 | Feature pipeline (`ingestion/`) | Done — Gold table in Unity Catalog |
 | XGBoost + walk-forward evaluation (`model-eval/`) | Done — overall MAE **4.88** PPR |
-| LLM insights (`insights/`) | Done — top 15 players / week, GPT-5.6 Terra |
-| FastAPI (`api/`) | Done — reads Delta tables directly |
-| React dashboard (`gridironlab/`) | Done — live data with sample fallback |
+| LLM insights (`insights/`) | Done — every slate player, GPT-5.6 Terra |
+| FastAPI (`api/`) | Done — reads Delta tables directly; deployed on ECS Fargate |
+| React dashboard (`gridironlab/`) | Done — S3 + CloudFront; live data with sample fallback |
 
-Seed slate in production tables: **2025 Week 17**. 2026 Week 1 is produced by `model-eval/week1_2026_slate_builder.py` once rosters and Vegas lines firm up.
+Current production slate: **2026 Week 2** — 665 players, all with LLM insights, written by `model-eval/week2_2026_slate_builder.py`. (Historical partitions: 2025 Week 17 seed, 2026 Week 1.)
 
 ---
 
@@ -53,7 +55,7 @@ Seed slate in production tables: **2025 Week 17**. 2026 Week 1 is produced by `m
 | Path | Role |
 | --- | --- |
 | `ingestion/` | Feature engineering notebook. Writes `player_weeks`. |
-| `model-eval/` | Baseline, walk-forward tuning, 2025 week-1 validation, 2026 slate builder. |
+| `model-eval/` | Baseline, walk-forward tuning, 2025 week-1 validation, 2026 slate builders. |
 | `insights/` | Production predict + RAG insights notebook. Writes `predictions`. |
 | `api/` | FastAPI serving layer (Databricks SQL Connector). |
 | `gridironlab/` | React + TypeScript UI (Vite, Tailwind). |
@@ -103,9 +105,9 @@ In-season (after Monday Night Football):
 2. Optionally run `model-eval/walk_forward_model.ipynb` for monitoring.
 3. Run `insights/insights_pipeline.ipynb` (writes that week’s predictions + insights).
 
-The UI does **not** need a code change. Restart the API (or wait out the 1-hour cache) and refresh the browser.
+The UI does **not** need a code change. Force a new ECS deployment (`aws ecs update-service --cluster gridiron-lab --service gridiron-lab-api --force-new-deployment`) or wait out the 1-hour cache, then refresh the browser.
 
-For **2026 Week 1**, run `model-eval/week1_2026_slate_builder.py` in early September after roster cuts — that partition becomes the dashboard slate automatically.
+For a future week's slate before games are played, run the corresponding slate builder in `model-eval/` (e.g. `week2_2026_slate_builder.py`) — that partition becomes the dashboard slate automatically.
 
 ---
 
