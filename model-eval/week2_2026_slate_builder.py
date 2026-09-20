@@ -284,6 +284,7 @@ rolling_map = {
 # season's final games (weight=0.3) using the same logic as feature_building.
 # This avoids noisy 1-game averages and matches the training data's blend.
 # ---------------------------------------------------------------------------
+PREDICT_SEASON = 2026
 PREV_WEIGHT = 0.3
 prev_season = PREDICT_SEASON - 1  # 2025
 
