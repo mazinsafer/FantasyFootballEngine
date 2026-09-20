@@ -104,18 +104,19 @@ Builds the Gold table from scratch. `SEASONS = [2020, 2021, 2022, 2023, 2024, 20
 - `rest_advantage` = own days-since-last-game − opponent's, computed per `(team, season)` so the offseason gap never counts; NaN → 0.
 - Merged into `weekly_stats_df` on `(season, week, recent_team)`.
 
-**Cell 11 — Category 2: rolling form + season carryover.**
-- `fantasy_points_3wk_avg` / `5wk_avg`: `groupby(['player_id','season'])[target].shift(1).rolling(3|5, min_periods=1).mean()` — **shifted one week and reset each season**.
-- `prev_season_ppg` / `prev_season_games`: per-player mean PPR and games count aggregated per season, then the season key is **shifted forward one year** (2024 stats attach to 2025 rows). Rookies and the first loaded season get 0. These are the cold-start prior for week 1.
+**Cell 11 — Category 2: rolling form + season carryover (cross-season blend, September 2026).**
+- `fantasy_points_3wk_avg` / `5wk_avg`: computed by `cross_season_rolling(df, value_col, window)` — a **cross-season blended** rolling average. If the player has ≥ `window` current-season games, it is a plain current-season rolling mean. If fewer (early-season weeks 1–5), the previous season's final games fill out the window at weight `CROSS_SEASON_PREV_WEIGHT = 0.3` vs 1.0 for current-season games: `(Σcur·1.0 + Σprev·0.3) / (n_cur·1.0 + n_prev·0.3)`. This fixes the old problem where a 35-point Week 1 produced a "3-week avg" of 35. By week 6+ every window is pure current season. Still `shift(1)`-based — only games strictly before the current week enter the window.
+- `rolling_games_count`: new feature — the number of **current-season** games inside the 5-week window (0 for week 1 rows), letting the model learn how much to trust the blend.
+- `prev_season_ppg` / `prev_season_games`: per-player mean PPR and games count aggregated per season, then the season key is **shifted forward one year** (2024 stats attach to 2025 rows). Rookies and the first loaded season get 0. Complements the blend as the full-season cold-start prior.
 
-**Cell 13 — Category 3: QB features.** For QB rows only: shifted 3/5-week rolling means of `pass_attempts` and `rushing_yards` (rushing floor). Plus two team-level pressure rates from play-by-play dropbacks (`qb_dropback == 1`), both **shifted season-to-date cumulative rates** (cum sacks ÷ cum dropbacks through the previous week): `team_sack_rate_allowed` (own O-line proxy, keyed by `posteam`) and `opp_def_sack_rate` (matchup, keyed by `defteam`, merged on the opponent).
+**Cell 13 — Category 3: QB features.** For QB rows only: cross-season blended 3/5-week rolling means (via `cross_season_rolling`) of `pass_attempts` and `rushing_yards` (rushing floor). Plus two team-level pressure rates from play-by-play dropbacks (`qb_dropback == 1`), both **shifted season-to-date cumulative rates** (cum sacks ÷ cum dropbacks through the previous week): `team_sack_rate_allowed` (own O-line proxy, keyed by `posteam`) and `opp_def_sack_rate` (matchup, keyed by `defteam`, merged on the opponent).
 
-**Cell 15 — Category 4: RB features.** For RB rows only, all shifted 3/5-week rolling means reset per season:
+**Cell 15 — Category 4: RB features.** For RB rows only, all cross-season blended 3/5-week rolling means:
 - `rb_opportunity_share_*`: (rush attempts + targets) ÷ team total (team rush + pass attempts from play-by-play).
 - `rb_hvts_*`: high-value touches = carries + targets with `yardline_100 <= 10`.
 - `rb_snap_share_*`: from `snap_counts.offense_pct`. **Snap counts are keyed by PFR ids** — mapped to GSIS ids via the roster's `pfr_id` column.
 
-**Cell 17 — Category 5: WR/TE features.** For WR/TE rows only, all shifted 3/5-week rolling means:
+**Cell 17 — Category 5: WR/TE features.** For WR/TE rows only, all cross-season blended 3/5-week rolling means:
 - `wr_te_target_share_*`: targets ÷ team pass attempts.
 - `wr_te_air_yards_share_*`: player air yards ÷ team air yards (from play-by-play `air_yards`).
 - `wr_te_wopr_*`: WOPR = `1.5*target_share + 0.7*air_yards_share`.
@@ -180,7 +181,7 @@ Builds a **forward-looking slate** for 2026 Week 1 (rows that don't exist in Gol
 - **QB/TE starter filter:** backup QBs and TEs (depth_chart_rank ≠ 1) are dropped from the slate, matching the Gold table's business rule — the model was trained exclusively on starter QB/TE rows.
 - **Production schedule:** run in the **first week of September 2026** — before final roster cuts (~Sept 1) depth charts show camp bodies and Vegas lines are preliminary.
 
-`model-eval/week2_2026_slate_builder.py` (added September 2026) is the Week 2 counterpart, built on the same slate-construction approach; it wrote the **665-player 2026 Week 2 partition that is the current production slate**, and every player in it has a GPT-5.6 Terra insight (see 4.7).
+`model-eval/week2_2026_slate_builder.py` (added September 2026) is the Week 2 counterpart, built on the same slate-construction approach; it wrote the **665-player 2026 Week 2 partition that is the current production slate**, and every player in it has a GPT-5.6 Terra insight (see 4.7). Unlike the Week 1 builder (all rolling features 0), it computes real rolling features from Week 1 actuals using the **same cross-season blend as the feature pipeline**: the single 2026 Week 1 game (weight 1.0) blended with the player's final 2025 games (weight 0.3, `(window − 1)` games), plus `rolling_games_count` (1 for players with a Week 1 game, 0 otherwise).
 
 ### 4.7 `insights/insights_pipeline.ipynb` (6 cells) — PRODUCTION PREDICTIONS + LLM INSIGHTS
 
@@ -274,7 +275,7 @@ Vite on http://localhost:5173. API base is `VITE_API_URL` or `http://localhost:8
 ## 5. The Rules That Must Never Be Broken
 
 1. **Shift everything.** Every historical feature uses `.shift(1)` (rolling means) or a shifted cumulative sum (season-to-date rates). Week N rows may only contain information available before week N kicks off.
-2. **Reset per season.** All rolling/expanding calculations group by `(entity, season)`. December form never leaks into September.
+2. **Season boundaries are explicit.** Season-to-date cumulative rates (sack rates, matchup PPG/YPC/YPP allowed, starting-QB AYA) reset per `(entity, season)` — December form never silently leaks into September. Rolling 3/5-week averages use the **deliberate cross-season blend** (previous season's final games at 0.3 weight, only while the current season has fewer games than the window; pure current-season by week 6). This is not leakage — last season's games are known before kickoff — but any new rolling feature must use `cross_season_rolling`, not an unweighted cross-season window.
 3. **Drop the same-week box score before training.** The 25 `same_week_outcome_cols` exist in Gold only as intermediates. Any model that keeps them is cheating (receptions literally determine PPR points).
 4. **Weeks 1–17 only.** Week 18 starters rest; weeks 19–22 are playoffs. Excluded from training and evaluation everywhere.
 5. **Time-ordered splits only.** Walk-forward fold: train ≤ W−2, early-stop on W−1, predict W. Never shuffle, never tune on test weeks (tuning uses weeks 5–10; testing uses 11–17).

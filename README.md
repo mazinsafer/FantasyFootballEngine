@@ -131,7 +131,7 @@ Scoring is full PPR everywhere:
 + 0.1·rec yds + 6·rec TD + 1·reception
 ```
 
-Rules that never break: shift every historical feature one week, reset rolling stats per season, drop same-week box score before training, weeks 1–17 only, time-ordered splits only. Details in [`documentation/context.md`](documentation/context.md).
+Rules that never break: shift every historical feature one week, drop same-week box score before training, weeks 1–17 only, time-ordered splits only. Season-to-date rates reset per season; rolling 3/5-week averages blend the previous season's final games at 0.3 weight during early-season weeks (pure current-season by week 6) — a deliberate cold-start prior, not leakage. Details in [`documentation/context.md`](documentation/context.md).
 
 ---
 

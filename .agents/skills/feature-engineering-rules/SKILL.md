@@ -10,13 +10,13 @@ description: >-
 
 # Feature Engineering Business Rules
 
-All rolling/historical features use past 3 and 5 game windows and must be shifted 1 week to prevent data leakage.
+All rolling/historical features use past 3 and 5 game windows and must be shifted 1 week to prevent data leakage. Rolling averages are **cross-season blended** (`cross_season_rolling` in the feature notebook): when the current season has fewer games than the window (weeks 1–5), the previous season's final games fill the window at 0.3 weight vs 1.0 for current-season games; week 6+ is pure current season. A companion feature `rolling_games_count` records how many current-season games are in the 5-week window. Any new rolling feature must go through `cross_season_rolling`.
 
 **Evaluation scope**: only depth-chart starters (rank 1) are evaluated at QB and TE; RB and WR keep all depth ranks (committees and WR2/WR3 are fantasy-relevant). `depth_chart_rank` is also a model feature for every position, taken from the latest `nfl.import_depth_charts()` daily snapshot before each game (as-of join on gameday, leakage-free).
 
 **Fantasy season scope**: models train and evaluate on **weeks 1–17 only**. Week 18 (starters rest) and playoff weeks 19–22 are excluded from both training and prediction.
 
-**Season carryover**: `prev_season_ppg` and `prev_season_games` (a player's prior-season PPR average and games played, shifted forward one season) give the model a leakage-free prior for week 1 and early-season predictions, when all in-season rolling features are zero.
+**Season carryover**: `prev_season_ppg` and `prev_season_games` (a player's prior-season PPR average and games played, shifted forward one season) give the model a leakage-free full-season prior for week 1 and early-season predictions, complementing the cross-season blend in the rolling averages.
 
 ## 1. General Game Context (all players)
 
