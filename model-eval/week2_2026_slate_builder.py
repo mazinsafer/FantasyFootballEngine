@@ -278,15 +278,57 @@ rolling_map = {
     'wr_te_wopr_5wk_avg': 'wopr',
 }
 
-# Build a DataFrame of Week 1 rolling features per player
-wk1_rolling = wk1_actuals[['player_id', 'position']].copy()
-for roll_col, actual_col in rolling_map.items():
-    if actual_col in wk1_actuals.columns:
-        wk1_rolling[roll_col] = wk1_actuals[actual_col].fillna(0)
-    else:
-        wk1_rolling[roll_col] = 0
+# ---------------------------------------------------------------------------
+# Cross-season blended rolling features.
+# Week 2 has only 1 current-season game (Week 1). Blend it with the previous
+# season's final games (weight=0.3) using the same logic as feature_building.
+# This avoids noisy 1-game averages and matches the training data's blend.
+# ---------------------------------------------------------------------------
+PREV_WEIGHT = 0.3
+prev_season = PREDICT_SEASON - 1  # 2025
 
-print(f"\n✓ Computed {len(rolling_map)} rolling features from Week 1 actuals")
+prev_season_df = gold_df[gold_df['season'] == prev_season].sort_values(['player_id', 'week']).copy()
+prev_season_df['player_id'] = prev_season_df['player_id'].astype(str)
+
+wk1_rolling = wk1_actuals[['player_id', 'position']].copy()
+wk1_rolling['player_id'] = wk1_rolling['player_id'].astype(str)
+
+for roll_col, actual_col in rolling_map.items():
+    window = 3 if '3wk' in roll_col else 5
+    n_prev_needed = window - 1  # 1 current-season game, need (window-1) from prev season
+
+    # Current-season value (Week 1 2026)
+    if actual_col in wk1_actuals.columns:
+        cur_series = wk1_actuals.set_index('player_id')[actual_col].fillna(0)
+    else:
+        cur_series = pd.Series(0, index=wk1_actuals['player_id'])
+
+    # Previous-season: last N games per player
+    if actual_col in prev_season_df.columns:
+        prev_last_n = prev_season_df.groupby('player_id').tail(n_prev_needed)
+        prev_sum = prev_last_n.groupby('player_id')[actual_col].sum().fillna(0)
+        prev_count = prev_last_n.groupby('player_id')[actual_col].count()
+    else:
+        prev_sum = pd.Series(0, index=[])
+        prev_count = pd.Series(0, index=[])
+
+    # Blend: (cur * 1.0 + prev_sum * 0.3) / (1.0 + prev_count * 0.3)
+    blended = []
+    for pid in wk1_rolling['player_id']:
+        cv = cur_series.get(pid, 0)
+        ps = prev_sum.get(pid, 0)
+        pc = prev_count.get(pid, 0)
+        if pc > 0:
+            blended.append((cv + ps * PREV_WEIGHT) / (1.0 + pc * PREV_WEIGHT))
+        else:
+            blended.append(cv)
+    wk1_rolling[roll_col] = blended
+
+# Add rolling_games_count (always 1 for Week 2 — only 1 current-season game)
+wk1_rolling['rolling_games_count'] = 1
+
+print(f"\n✓ Computed {len(rolling_map)} cross-season blended rolling features")
+print(f"  Current-season weight: 1.0, previous-season ({prev_season}) weight: {PREV_WEIGHT}")
 print(f"  Players with rolling data: {len(wk1_rolling)}")
 
 # ---------------------------------------------------------------------------
@@ -368,6 +410,9 @@ slate_2026 = slate_2026.merge(
 players_with_wk1 = slate_2026[list(rolling_map.keys())[0]].notna().sum()
 for roll_col in rolling_map.keys():
     slate_2026[roll_col] = slate_2026[roll_col].fillna(0)
+
+# Fill rolling_games_count for players without Week 1 data (0 current-season games)
+slate_2026['rolling_games_count'] = slate_2026['rolling_games_count'].fillna(0)
 
 print(f"  Players with Week 1 rolling data: {players_with_wk1}")
 print(f"  Players without (filling with 0): {len(slate_2026) - players_with_wk1}")
