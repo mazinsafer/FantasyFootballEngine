@@ -23,11 +23,12 @@ refresh the browser.
 
 ## Deploy
 
-Production is served from S3 + CloudFront at
-`https://d1mkvupgst3eb9.cloudfront.net`. The same distribution proxies `/api/*`
-to the ECS Fargate API, so live data is same-origin (no CORS).
-`.env.production` sets `VITE_API_URL` to the CloudFront URL for production
-builds. To ship a new build:
+Production is live at `https://gridironlab.live` (and `www.gridironlab.live`),
+served from S3 + CloudFront (`d1mkvupgst3eb9.cloudfront.net`). The same
+distribution proxies `/api/*` to the ECS Fargate API, so live data is
+same-origin (no CORS). `.env.production` sets `VITE_API_URL` to an empty
+string, giving relative API URLs that work on every production hostname.
+To ship a new build:
 
 ```bash
 npm run build
