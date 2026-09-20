@@ -30,7 +30,7 @@ fantasy_football.gold.player_weeks          ~29k player-weeks, 2020–2025
         gridironlab/  React + TypeScript    S3 + CloudFront (local: :5173)
 ```
 
-Production is served from a single CloudFront distribution (`d1mkvupgst3eb9.cloudfront.net`): the frontend from the `gridiron-lab` S3 bucket, and `/api/*` proxied to the Fargate service behind an ALB. Deployment details: [`api/README.md`](api/README.md).
+Production is live at **[gridironlab.live](https://gridironlab.live)** (also `www.gridironlab.live`), served from a single CloudFront distribution (`d1mkvupgst3eb9.cloudfront.net`): the frontend from the `gridiron-lab` S3 bucket, and `/api/*` proxied to the Fargate service behind an ALB. DNS is a Route 53 hosted zone (domain registered at Namecheap, delegated to AWS nameservers); TLS is a free ACM certificate covering the apex and `www`. Deployment details: [`api/README.md`](api/README.md).
 
 Gold is rebuilt from scratch on every feature run. Predictions are a **history table**: each run replaces only its own `(season, week)` partition. The API always serves the newest `(season, week)` in that table. The UI has no hardcoded week — after you write a new partition, it picks it up on the next fetch (API cache TTL is one hour; refresh the browser tab).
 

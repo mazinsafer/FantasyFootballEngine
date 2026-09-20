@@ -84,7 +84,8 @@ The API runs as a single Fargate task (0.25 vCPU / 512 MB, ARM64) behind an Appl
 | ECS | cluster `gridiron-lab`, service `gridiron-lab-api`, task definition `api/ecs-task-def.json` |
 | Secrets | SSM Parameter Store SecureStrings under `/gridiron-lab/*` (the three Databricks vars), injected by the task execution role |
 | Load balancer | `gridiron-lab-alb` (HTTP :80 → container :8000, health check `/health`); its security group only admits CloudFront origin-facing IPs |
-| Public HTTPS | CloudFront distribution `d1mkvupgst3eb9.cloudfront.net` routes `/api/*` to the ALB (caching disabled); everything else serves the frontend from S3 |
+| Public HTTPS | `https://gridironlab.live` (+ `www`) → CloudFront distribution `d1mkvupgst3eb9.cloudfront.net`, which routes `/api/*` to the ALB (caching disabled); everything else serves the frontend from S3 |
+| DNS / TLS | Route 53 hosted zone `gridironlab.live` (registered at Namecheap, delegated to AWS); ACM certificate for apex + `www` attached to CloudFront |
 
 Because the API and frontend share the CloudFront origin, CORS is not needed in production (the task still sets `CORS_ORIGINS` to the CloudFront URL as a belt-and-suspenders measure).
 
