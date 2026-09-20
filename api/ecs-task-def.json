@@ -1,0 +1,33 @@
+{
+  "family": "gridiron-lab-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "runtimePlatform": { "cpuArchitecture": "ARM64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::814251983407:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "api",
+      "image": "814251983407.dkr.ecr.us-east-1.amazonaws.com/gridiron-lab-api:latest",
+      "essential": true,
+      "portMappings": [{ "containerPort": 8000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "CORS_ORIGINS", "value": "https://d1mkvupgst3eb9.cloudfront.net" }
+      ],
+      "secrets": [
+        { "name": "DATABRICKS_SERVER_HOSTNAME", "valueFrom": "arn:aws:ssm:us-east-1:814251983407:parameter/gridiron-lab/DATABRICKS_SERVER_HOSTNAME" },
+        { "name": "DATABRICKS_HTTP_PATH", "valueFrom": "arn:aws:ssm:us-east-1:814251983407:parameter/gridiron-lab/DATABRICKS_HTTP_PATH" },
+        { "name": "DATABRICKS_ACCESS_TOKEN", "valueFrom": "arn:aws:ssm:us-east-1:814251983407:parameter/gridiron-lab/DATABRICKS_ACCESS_TOKEN" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/gridiron-lab-api",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "api"
+        }
+      }
+    }
+  ]
+}

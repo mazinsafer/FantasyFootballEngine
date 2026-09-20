@@ -1,0 +1,9 @@
+.env
+.env.example
+.venv
+__pycache__
+tests
+pytest.ini
+requirements-dev.txt
+README.md
+.python-version
