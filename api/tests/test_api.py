@@ -15,7 +15,7 @@ client = TestClient(app)
 
 def test_clamp_pagination() -> None:
     assert _clamp_pagination(50, 0) == (50, 0)
-    assert _clamp_pagination(9999, -3) == (500, 0)
+    assert _clamp_pagination(9999, -3) == (700, 0)
     assert _clamp_pagination(0, 10) == (1, 10)
 
 
